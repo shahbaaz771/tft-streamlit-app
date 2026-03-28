@@ -93,9 +93,6 @@ if not stores:
     st.error("No stores found in meta.parquet.")
     st.stop()
 
-# -------------------------
-# 1) Store selection
-# -------------------------
 store_choice = st.selectbox("Select Store", stores)
 
 store_meta = meta[meta["store_nbr"] == store_choice].copy()
@@ -104,9 +101,6 @@ if store_meta.empty:
     st.warning("No data found for this store.")
     st.stop()
 
-# -------------------------
-# 2) Replenish / Promote
-# -------------------------
 st.subheader(f"Store {store_choice} recommendations")
 
 repl_sort_col = first_existing_column(
@@ -177,9 +171,6 @@ with col2:
     st.markdown("### Top 10 Promote")
     st.dataframe(promo, use_container_width=True)
 
-# -------------------------
-# 3) Family selection
-# -------------------------
 if "family" in store_meta.columns:
     families = sorted(store_meta["family"].dropna().astype(str).unique().tolist())
 else:
@@ -197,9 +188,6 @@ if store_family_meta.empty:
     st.warning("No items found for this family in this store.")
     st.stop()
 
-# -------------------------
-# 4) Trending score table for selected family
-# -------------------------
 st.markdown(f"### Trending Score Table — Family: {family_choice}")
 
 trending_view = trending_scores.copy()
@@ -232,9 +220,6 @@ else:
     trending_display = safe_show_columns(trending_view, trending_preferred_cols)
     st.dataframe(trending_display, use_container_width=True)
 
-# -------------------------
-# 5) Item selection (from selected family)
-# -------------------------
 family_items = sorted(store_family_meta["item_nbr"].dropna().astype(str).unique().tolist())
 
 if not family_items:
@@ -243,9 +228,6 @@ if not family_items:
 
 item_choice = st.selectbox("Select Item", family_items)
 
-# -------------------------
-# 6) Forecast data for selected store + item
-# -------------------------
 item_forecast = forecast_detail.copy()
 if "store_nbr" in item_forecast.columns:
     item_forecast = item_forecast[item_forecast["store_nbr"] == store_choice]
@@ -313,14 +295,3 @@ else:
     ]
     forecast_display = safe_show_columns(item_forecast, forecast_cols_preferred)
     st.dataframe(forecast_display, use_container_width=True)
-
-with st.expander("Debug info"):
-    st.write("meta columns:", meta.columns.tolist())
-    st.write("forecast_detail columns:", forecast_detail.columns.tolist())
-    st.write("history columns:", history.columns.tolist())
-    st.write("trending_scores columns:", trending_scores.columns.tolist())
-    st.write("Selected store:", store_choice)
-    st.write("Selected family:", family_choice)
-    st.write("Selected item:", item_choice)
-    st.write("Replenish sort column:", repl_sort_col)
-    st.write("Promote sort column:", promo_sort_col)
