@@ -1,8 +1,9 @@
-import streamlit as st
-import pandas as pd
-import matplotlib.pyplot as plt
 import json
 from pathlib import Path
+
+import matplotlib.pyplot as plt
+import pandas as pd
+import streamlit as st
 
 st.set_page_config(page_title="Favorita Forecast Dashboard", layout="wide")
 
@@ -14,87 +15,81 @@ def load_data():
     meta = pd.read_parquet(ARTIFACT_DIR / "meta.parquet")
     forecast_detail = pd.read_parquet(ARTIFACT_DIR / "forecast_detail.parquet")
     history = pd.read_parquet(ARTIFACT_DIR / "history.parquet")
-    trending_scores = pd.read_parquet(ARTIFACT_DIR / "trending_scores.parquet")
+
+    trending_path = ARTIFACT_DIR / "trending_scores.parquet"
+    if trending_path.exists():
+        trending_scores = pd.read_parquet(trending_path)
+    else:
+        trending_scores = pd.DataFrame()
 
     with open(ARTIFACT_DIR / "config.json", "r") as f:
         config = json.load(f)
 
-    # Standardize dtypes
-    if "store_nbr" in meta.columns:
-        meta["store_nbr"] = meta["store_nbr"].astype(str)
-    if "item_nbr" in meta.columns:
-        meta["item_nbr"] = meta["item_nbr"].astype(str)
-
-    if "store_nbr" in forecast_detail.columns:
-        forecast_detail["store_nbr"] = forecast_detail["store_nbr"].astype(str)
-    if "item_nbr" in forecast_detail.columns:
-        forecast_detail["item_nbr"] = forecast_detail["item_nbr"].astype(str)
-    if "date" in forecast_detail.columns:
-        forecast_detail["date"] = pd.to_datetime(forecast_detail["date"])
-
-    if "store_nbr" in history.columns:
-        history["store_nbr"] = history["store_nbr"].astype(str)
-    if "item_nbr" in history.columns:
-        history["item_nbr"] = history["item_nbr"].astype(str)
-    if "date" in history.columns:
-        history["date"] = pd.to_datetime(history["date"])
-
-    if "store_nbr" in trending_scores.columns:
-        trending_scores["store_nbr"] = trending_scores["store_nbr"].astype(str)
+    for df in [meta, forecast_detail, history, trending_scores]:
+        if "store_nbr" in df.columns:
+            df["store_nbr"] = df["store_nbr"].astype(str)
+        if "item_nbr" in df.columns:
+            df["item_nbr"] = df["item_nbr"].astype(str)
+        if "date" in df.columns:
+            df["date"] = pd.to_datetime(df["date"])
 
     return meta, forecast_detail, history, trending_scores, config
 
 
-def safe_show_columns(df, preferred_cols):
+def safe_show_columns(df: pd.DataFrame, preferred_cols: list[str]) -> pd.DataFrame:
     cols = [c for c in preferred_cols if c in df.columns]
     return df[cols] if cols else df
 
 
-def get_store_trending_scores(trending_scores, store_choice):
-    """
-    Return a store-filtered trending table if store_nbr exists.
-    Otherwise return the whole table.
-    """
+def first_existing_column(df: pd.DataFrame, candidates: list[str]):
+    for col in candidates:
+        if col in df.columns:
+            return col
+    return None
+
+
+def get_store_trending_scores(trending_scores: pd.DataFrame, store_choice: str) -> pd.DataFrame:
     if trending_scores.empty:
         return trending_scores
-
     if "store_nbr" in trending_scores.columns:
         return trending_scores[trending_scores["store_nbr"] == store_choice].copy()
-
     return trending_scores.copy()
 
 
-def sort_trending_table(df):
-    """
-    Try to sort trending table by the most likely ranking column if present.
-    """
-    sort_candidates = [
+def sort_trending_table(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    score_desc_candidates = [
         "trend_score",
         "trending_score",
         "score",
+        "weighted_score",
+        "growth_score",
+        "uplift",
+        "lift",
+    ]
+    rank_asc_candidates = [
         "rank",
         "trend_rank",
-        "lift",
-        "uplift",
     ]
 
-    for col in sort_candidates:
+    for col in score_desc_candidates:
         if col in df.columns:
-            ascending = col in {"rank", "trend_rank"}
-            return df.sort_values(col, ascending=ascending).reset_index(drop=True)
+            return df.sort_values(col, ascending=False).reset_index(drop=True)
+
+    for col in rank_asc_candidates:
+        if col in df.columns:
+            return df.sort_values(col, ascending=True).reset_index(drop=True)
 
     return df.reset_index(drop=True)
 
 
-# Load data
 meta, forecast_detail, history, trending_scores, config = load_data()
 
 st.title("Favorita Forecast Dashboard")
 st.caption("Store-level replenish, promote, trending, and forecast view")
 
-# -------------------------
-# Sidebar / top controls
-# -------------------------
 if "store_nbr" not in meta.columns:
     st.error("meta.parquet does not contain 'store_nbr'.")
     st.stop()
@@ -112,10 +107,22 @@ if store_meta.empty:
     st.warning("No data found for this store.")
     st.stop()
 
-# -------------------------
-# Replenish / Promote tables
-# -------------------------
 st.subheader(f"Store {store_choice} recommendations")
+
+repl_sort_col = first_existing_column(
+    store_meta,
+    ["pred_sum_nextH", "pred_avg_nextH", "forecast_sum", "forecast_avg"],
+)
+promo_sort_col = first_existing_column(
+    store_meta,
+    [
+        "promo_uplift_units_est",
+        "promo_uplift_est",
+        "promo_score",
+        "promo_ratio",
+        "pred_sum_nextH",
+    ],
+)
 
 repl_cols_preferred = [
     "store_nbr",
@@ -123,6 +130,8 @@ repl_cols_preferred = [
     "family",
     "pred_sum_nextH",
     "pred_avg_nextH",
+    "forecast_sum",
+    "forecast_avg",
 ]
 
 promo_cols_preferred = [
@@ -131,21 +140,30 @@ promo_cols_preferred = [
     "family",
     "promo_ratio",
     "promo_uplift_units_est",
+    "promo_uplift_est",
+    "promo_score",
     "pred_sum_nextH",
 ]
 
-repl = (
-    store_meta.sort_values("pred_sum_nextH", ascending=False)
-    .head(10)
-    .reset_index(drop=True)
-)
-repl = safe_show_columns(repl, repl_cols_preferred)
+if repl_sort_col is not None:
+    repl = (
+        store_meta.sort_values(repl_sort_col, ascending=False)
+        .head(10)
+        .reset_index(drop=True)
+    )
+else:
+    repl = store_meta.head(10).reset_index(drop=True)
 
-promo = (
-    store_meta.sort_values("promo_uplift_units_est", ascending=False)
-    .head(10)
-    .reset_index(drop=True)
-)
+if promo_sort_col is not None:
+    promo = (
+        store_meta.sort_values(promo_sort_col, ascending=False)
+        .head(10)
+        .reset_index(drop=True)
+    )
+else:
+    promo = store_meta.head(10).reset_index(drop=True)
+
+repl = safe_show_columns(repl, repl_cols_preferred)
 promo = safe_show_columns(promo, promo_cols_preferred)
 
 col1, col2 = st.columns(2)
@@ -158,9 +176,6 @@ with col2:
     st.markdown("### Top 10 Promote")
     st.dataframe(promo, use_container_width=True)
 
-# -------------------------
-# Trending table
-# -------------------------
 trending_view = get_store_trending_scores(trending_scores, store_choice)
 trending_view = sort_trending_table(trending_view)
 
@@ -169,7 +184,6 @@ st.markdown("### Trending Score Table")
 if trending_view.empty:
     st.info("No trending score data found for this store.")
 else:
-    # Try to show the most useful columns first if they exist
     trending_preferred_cols = [
         "store_nbr",
         "family",
@@ -187,12 +201,11 @@ else:
     trending_display = safe_show_columns(trending_view, trending_preferred_cols)
     st.dataframe(trending_display, use_container_width=True)
 
-# -------------------------
-# Item selector
-# -------------------------
 top_items = []
+
 if "item_nbr" in repl.columns:
     top_items.extend(repl["item_nbr"].dropna().astype(str).tolist())
+
 if "item_nbr" in promo.columns:
     top_items.extend(promo["item_nbr"].dropna().astype(str).tolist())
 
@@ -210,45 +223,48 @@ if not item_options:
 
 item_choice = st.selectbox("Select Item", item_options)
 
-# -------------------------
-# Item detail data
-# -------------------------
-item_forecast = forecast_detail[
-    (forecast_detail["store_nbr"] == store_choice) &
-    (forecast_detail["item_nbr"] == item_choice)
-].copy()
+item_forecast = forecast_detail.copy()
+if "store_nbr" in item_forecast.columns:
+    item_forecast = item_forecast[item_forecast["store_nbr"] == store_choice]
+if "item_nbr" in item_forecast.columns:
+    item_forecast = item_forecast[item_forecast["item_nbr"] == item_choice]
+item_forecast = item_forecast.copy()
 
-item_history = history[
-    (history["store_nbr"] == store_choice) &
-    (history["item_nbr"] == item_choice)
-].copy()
+item_history = history.copy()
+if "store_nbr" in item_history.columns:
+    item_history = item_history[item_history["store_nbr"] == store_choice]
+if "item_nbr" in item_history.columns:
+    item_history = item_history[item_history["item_nbr"] == item_choice]
+item_history = item_history.copy()
 
 st.subheader(f"Store {store_choice} | Item {item_choice}")
 
 if item_forecast.empty:
     st.info("No forecast details found for this store-item.")
 else:
-    # Sort
     if "date" in item_forecast.columns:
         item_forecast = item_forecast.sort_values("date")
     if "date" in item_history.columns:
         item_history = item_history.sort_values("date")
 
-    # Limit history shown on plot
     max_encoder_length = int(config.get("max_encoder_length", 60))
     if not item_history.empty:
         item_history = item_history.tail(max_encoder_length)
 
     fig, ax = plt.subplots(figsize=(10, 4))
 
-    if not item_history.empty and "unit_sales" in item_history.columns:
+    if not item_history.empty and {"date", "unit_sales"}.issubset(item_history.columns):
         ax.plot(item_history["date"], item_history["unit_sales"], label="History (actual)")
 
-    if "actual_sales" in item_forecast.columns:
+    if {"date", "actual_sales"}.issubset(item_forecast.columns):
         ax.plot(item_forecast["date"], item_forecast["actual_sales"], label="Horizon (actual)")
 
-    if "forecast_sales" in item_forecast.columns:
-        ax.plot(item_forecast["date"], item_forecast["forecast_sales"], label="Horizon (forecast)")
+    forecast_col = first_existing_column(
+        item_forecast,
+        ["forecast_sales", "predicted_sales", "pred_sales", "yhat"],
+    )
+    if forecast_col is not None and "date" in item_forecast.columns:
+        ax.plot(item_forecast["date"], item_forecast[forecast_col], label="Horizon (forecast)")
 
     if "date" in item_forecast.columns and len(item_forecast) > 0:
         forecast_start = item_forecast["date"].min()
@@ -270,6 +286,17 @@ else:
         "date",
         "actual_sales",
         "forecast_sales",
+        "predicted_sales",
+        "pred_sales",
+        "yhat",
     ]
     forecast_display = safe_show_columns(item_forecast, forecast_cols_preferred)
     st.dataframe(forecast_display, use_container_width=True)
+
+with st.expander("Debug info"):
+    st.write("meta columns:", meta.columns.tolist())
+    st.write("forecast_detail columns:", forecast_detail.columns.tolist())
+    st.write("history columns:", history.columns.tolist())
+    st.write("trending_scores columns:", trending_scores.columns.tolist())
+    st.write("Replenish sort column:", repl_sort_col)
+    st.write("Promote sort column:", promo_sort_col)
