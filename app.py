@@ -82,7 +82,7 @@ def sort_trending_table(df: pd.DataFrame) -> pd.DataFrame:
 meta, forecast_detail, history, trending_scores, config = load_data()
 
 st.title("Favorita Forecast Dashboard")
-st.caption("Store → Replenish/Promote → Family → Item → Trend + Forecast")
+st.caption("Store → Replenish / Promote → Family → Item → Trending + Forecast")
 
 if "store_nbr" not in meta.columns:
     st.error("meta.parquet does not contain 'store_nbr'.")
@@ -93,14 +93,15 @@ if not stores:
     st.error("No stores found in meta.parquet.")
     st.stop()
 
+# 1) Store selection
 store_choice = st.selectbox("Select Store", stores)
 
 store_meta = meta[meta["store_nbr"] == store_choice].copy()
-
 if store_meta.empty:
     st.warning("No data found for this store.")
     st.stop()
 
+# 2) Replenish / Promote tables
 st.subheader(f"Store {store_choice} recommendations")
 
 repl_sort_col = first_existing_column(
@@ -111,10 +112,10 @@ repl_sort_col = first_existing_column(
 promo_sort_col = first_existing_column(
     store_meta,
     [
-        "promo_uplift_units_est",
-        "promo_uplift_est",
-        "promo_score",
+        "final_promote_score",
+        "pred_rec_score",
         "promo_ratio",
+        "promo_uplift_units_est",
         "pred_sum_nextH",
     ],
 )
@@ -133,10 +134,10 @@ promo_cols_preferred = [
     "store_nbr",
     "item_nbr",
     "family",
+    "final_promote_score",
+    "pred_rec_score",
     "promo_ratio",
     "promo_uplift_units_est",
-    "promo_uplift_est",
-    "promo_score",
     "pred_sum_nextH",
 ]
 
@@ -171,11 +172,12 @@ with col2:
     st.markdown("### Top 10 Promote")
     st.dataframe(promo, use_container_width=True)
 
-if "family" in store_meta.columns:
-    families = sorted(store_meta["family"].dropna().astype(str).unique().tolist())
-else:
-    families = []
+# 3) Family selection
+if "family" not in store_meta.columns:
+    st.warning("No family column found in meta.parquet.")
+    st.stop()
 
+families = sorted(store_meta["family"].dropna().astype(str).unique().tolist())
 if not families:
     st.warning("No family values found for this store.")
     st.stop()
@@ -183,15 +185,14 @@ if not families:
 family_choice = st.selectbox("Select Family", families)
 
 store_family_meta = store_meta[store_meta["family"] == family_choice].copy()
-
 if store_family_meta.empty:
     st.warning("No items found for this family in this store.")
     st.stop()
 
+# 4) Trending score table for selected family
 st.markdown(f"### Trending Score Table — Family: {family_choice}")
 
 trending_view = trending_scores.copy()
-
 if not trending_view.empty:
     if "store_nbr" in trending_view.columns:
         trending_view = trending_view[trending_view["store_nbr"] == store_choice]
@@ -213,6 +214,8 @@ else:
         "score",
         "rank",
         "trend_rank",
+        "count",
+        "coverage",
         "sales_last_7",
         "sales_prev_7",
         "growth_rate",
@@ -220,14 +223,15 @@ else:
     trending_display = safe_show_columns(trending_view, trending_preferred_cols)
     st.dataframe(trending_display, use_container_width=True)
 
+# 5) Item selection from selected family
 family_items = sorted(store_family_meta["item_nbr"].dropna().astype(str).unique().tolist())
-
 if not family_items:
     st.warning("No items found for this selected family.")
     st.stop()
 
 item_choice = st.selectbox("Select Item", family_items)
 
+# 6) Forecast and history for selected store + item
 item_forecast = forecast_detail.copy()
 if "store_nbr" in item_forecast.columns:
     item_forecast = item_forecast[item_forecast["store_nbr"] == store_choice]
