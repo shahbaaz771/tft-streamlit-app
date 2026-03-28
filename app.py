@@ -30,6 +30,8 @@ def load_data():
             df["store_nbr"] = df["store_nbr"].astype(str)
         if "item_nbr" in df.columns:
             df["item_nbr"] = df["item_nbr"].astype(str)
+        if "family" in df.columns:
+            df["family"] = df["family"].astype(str)
         if "date" in df.columns:
             df["date"] = pd.to_datetime(df["date"])
 
@@ -46,14 +48,6 @@ def first_existing_column(df: pd.DataFrame, candidates: list[str]):
         if col in df.columns:
             return col
     return None
-
-
-def get_store_trending_scores(trending_scores: pd.DataFrame, store_choice: str) -> pd.DataFrame:
-    if trending_scores.empty:
-        return trending_scores
-    if "store_nbr" in trending_scores.columns:
-        return trending_scores[trending_scores["store_nbr"] == store_choice].copy()
-    return trending_scores.copy()
 
 
 def sort_trending_table(df: pd.DataFrame) -> pd.DataFrame:
@@ -88,7 +82,7 @@ def sort_trending_table(df: pd.DataFrame) -> pd.DataFrame:
 meta, forecast_detail, history, trending_scores, config = load_data()
 
 st.title("Favorita Forecast Dashboard")
-st.caption("Store-level replenish, promote, trending, and forecast view")
+st.caption("Store → Replenish/Promote → Family → Item → Trend + Forecast")
 
 if "store_nbr" not in meta.columns:
     st.error("meta.parquet does not contain 'store_nbr'.")
@@ -99,6 +93,9 @@ if not stores:
     st.error("No stores found in meta.parquet.")
     st.stop()
 
+# -------------------------
+# 1) Store selection
+# -------------------------
 store_choice = st.selectbox("Select Store", stores)
 
 store_meta = meta[meta["store_nbr"] == store_choice].copy()
@@ -107,12 +104,16 @@ if store_meta.empty:
     st.warning("No data found for this store.")
     st.stop()
 
+# -------------------------
+# 2) Replenish / Promote
+# -------------------------
 st.subheader(f"Store {store_choice} recommendations")
 
 repl_sort_col = first_existing_column(
     store_meta,
     ["pred_sum_nextH", "pred_avg_nextH", "forecast_sum", "forecast_avg"],
 )
+
 promo_sort_col = first_existing_column(
     store_meta,
     [
@@ -176,13 +177,43 @@ with col2:
     st.markdown("### Top 10 Promote")
     st.dataframe(promo, use_container_width=True)
 
-trending_view = get_store_trending_scores(trending_scores, store_choice)
+# -------------------------
+# 3) Family selection
+# -------------------------
+if "family" in store_meta.columns:
+    families = sorted(store_meta["family"].dropna().astype(str).unique().tolist())
+else:
+    families = []
+
+if not families:
+    st.warning("No family values found for this store.")
+    st.stop()
+
+family_choice = st.selectbox("Select Family", families)
+
+store_family_meta = store_meta[store_meta["family"] == family_choice].copy()
+
+if store_family_meta.empty:
+    st.warning("No items found for this family in this store.")
+    st.stop()
+
+# -------------------------
+# 4) Trending score table for selected family
+# -------------------------
+st.markdown(f"### Trending Score Table — Family: {family_choice}")
+
+trending_view = trending_scores.copy()
+
+if not trending_view.empty:
+    if "store_nbr" in trending_view.columns:
+        trending_view = trending_view[trending_view["store_nbr"] == store_choice]
+    if "family" in trending_view.columns:
+        trending_view = trending_view[trending_view["family"] == family_choice]
+
 trending_view = sort_trending_table(trending_view)
 
-st.markdown("### Trending Score Table")
-
 if trending_view.empty:
-    st.info("No trending score data found for this store.")
+    st.info("No trending score data found for this store-family combination.")
 else:
     trending_preferred_cols = [
         "store_nbr",
@@ -201,43 +232,33 @@ else:
     trending_display = safe_show_columns(trending_view, trending_preferred_cols)
     st.dataframe(trending_display, use_container_width=True)
 
-top_items = []
+# -------------------------
+# 5) Item selection (from selected family)
+# -------------------------
+family_items = sorted(store_family_meta["item_nbr"].dropna().astype(str).unique().tolist())
 
-if "item_nbr" in repl.columns:
-    top_items.extend(repl["item_nbr"].dropna().astype(str).tolist())
-
-if "item_nbr" in promo.columns:
-    top_items.extend(promo["item_nbr"].dropna().astype(str).tolist())
-
-top_items = pd.Series(top_items).drop_duplicates().tolist()
-
-all_items = []
-if "item_nbr" in store_meta.columns:
-    all_items = sorted(store_meta["item_nbr"].dropna().astype(str).unique().tolist())
-
-item_options = top_items + [x for x in all_items if x not in top_items]
-
-if not item_options:
-    st.warning("No items found for this store.")
+if not family_items:
+    st.warning("No items found for this selected family.")
     st.stop()
 
-item_choice = st.selectbox("Select Item", item_options)
+item_choice = st.selectbox("Select Item", family_items)
 
+# -------------------------
+# 6) Forecast data for selected store + item
+# -------------------------
 item_forecast = forecast_detail.copy()
 if "store_nbr" in item_forecast.columns:
     item_forecast = item_forecast[item_forecast["store_nbr"] == store_choice]
 if "item_nbr" in item_forecast.columns:
     item_forecast = item_forecast[item_forecast["item_nbr"] == item_choice]
-item_forecast = item_forecast.copy()
 
 item_history = history.copy()
 if "store_nbr" in item_history.columns:
     item_history = item_history[item_history["store_nbr"] == store_choice]
 if "item_nbr" in item_history.columns:
     item_history = item_history[item_history["item_nbr"] == item_choice]
-item_history = item_history.copy()
 
-st.subheader(f"Store {store_choice} | Item {item_choice}")
+st.subheader(f"Forecast Plot — Store {store_choice} | Family {family_choice} | Item {item_choice}")
 
 if item_forecast.empty:
     st.info("No forecast details found for this store-item.")
@@ -298,5 +319,8 @@ with st.expander("Debug info"):
     st.write("forecast_detail columns:", forecast_detail.columns.tolist())
     st.write("history columns:", history.columns.tolist())
     st.write("trending_scores columns:", trending_scores.columns.tolist())
+    st.write("Selected store:", store_choice)
+    st.write("Selected family:", family_choice)
+    st.write("Selected item:", item_choice)
     st.write("Replenish sort column:", repl_sort_col)
     st.write("Promote sort column:", promo_sort_col)
