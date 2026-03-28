@@ -1,0 +1,6 @@
+{
+  "forecast_horizon": 16,
+  "max_encoder_length": 60,
+  "top_product_types": 15,
+  "max_news": 25
+}
