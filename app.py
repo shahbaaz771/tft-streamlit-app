@@ -160,10 +160,9 @@ item_choice = st.sidebar.selectbox("Item (for forecast plot)", item_options, ind
 
 view_mode = st.sidebar.radio(
     "Recommendation View",
-    options=["Both", "Replenish", "Promote"],
+    options=["Replenish", "Promote"],
     index=0,
 )
-
 top_n = st.sidebar.slider("Top N recommendations", min_value=5, max_value=20, value=10)
 show_forecast_details = st.sidebar.checkbox("Show forecast details table", value=True)
 
