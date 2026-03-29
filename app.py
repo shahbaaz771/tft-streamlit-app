@@ -110,8 +110,6 @@ def plot_family_pie(df: pd.DataFrame, title: str):
     ax.axis("equal")
     st.pyplot(fig)
 
-    st.dataframe(family_counts, use_container_width=True)
-
 
 meta, forecast_detail, history, trending_scores, config = load_data()
 
@@ -277,12 +275,24 @@ with k3:
 # -----------------------------
 # Tabs
 # -----------------------------
-tab1, tab2, tab3, tab4, tab5 = st.tabs(
-    ["Recommendations", "Family Mix", "Trending", "Forecast Plot", "Forecast Details"]
+tab1, tab2, tab3, tab4 = st.tabs(
+    ["Recommendations", "Trending", "Forecast Plot", "Forecast Details"]
 )
 
 with tab1:
     st.subheader(f"Store {store_choice} recommendations")
+
+    p1, p2 = st.columns(2)
+
+    with p1:
+        st.markdown(f"### Replenish Family Distribution (Top {top_n})")
+        plot_family_pie(repl, "Replenish by Family")
+
+    with p2:
+        st.markdown(f"### Promote Family Distribution (Top {top_n})")
+        plot_family_pie(promo, "Promote by Family")
+
+    st.divider()
 
     c1, c2 = st.columns(2)
 
@@ -307,19 +317,6 @@ with tab1:
         )
 
 with tab2:
-    st.subheader(f"Family Mix for Store {store_choice}")
-
-    c1, c2 = st.columns(2)
-
-    with c1:
-        st.markdown(f"### Replenish Family Distribution (Top {top_n})")
-        plot_family_pie(repl, "Replenish by Family")
-
-    with c2:
-        st.markdown(f"### Promote Family Distribution (Top {top_n})")
-        plot_family_pie(promo, "Promote by Family")
-
-with tab3:
     family_label = family_choice if family_choice != "All" else "All Families"
     st.subheader(f"Trending Score Table — {family_label}")
 
@@ -334,7 +331,7 @@ with tab3:
             mime="text/csv",
         )
 
-with tab4:
+with tab3:
     if item_choice == "All":
         st.subheader("Forecast Plot")
         st.info("Select a specific item from the sidebar to view the forecast plot.")
@@ -396,7 +393,7 @@ with tab4:
             plt.xticks(rotation=30)
             st.pyplot(fig)
 
-with tab5:
+with tab4:
     st.subheader("Forecast Details")
 
     if item_choice == "All":
