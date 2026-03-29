@@ -81,6 +81,38 @@ def to_csv_bytes(df: pd.DataFrame) -> bytes:
     return df.to_csv(index=False).encode("utf-8")
 
 
+def plot_family_pie(df: pd.DataFrame, title: str):
+    if df.empty or "family" not in df.columns:
+        st.info(f"No family data available for {title}.")
+        return
+
+    family_counts = (
+        df["family"]
+        .fillna("NA")
+        .astype(str)
+        .value_counts()
+        .reset_index()
+    )
+    family_counts.columns = ["family", "count"]
+
+    if family_counts.empty:
+        st.info(f"No family data available for {title}.")
+        return
+
+    fig, ax = plt.subplots(figsize=(6, 6))
+    ax.pie(
+        family_counts["count"],
+        labels=family_counts["family"],
+        autopct="%1.1f%%",
+        startangle=90,
+    )
+    ax.set_title(title)
+    ax.axis("equal")
+    st.pyplot(fig)
+
+    st.dataframe(family_counts, use_container_width=True)
+
+
 meta, forecast_detail, history, trending_scores, config = load_data()
 
 st.title("Favorita Forecast Dashboard")
@@ -112,23 +144,22 @@ if "family" not in store_meta.columns:
     st.stop()
 
 families = sorted(store_meta["family"].dropna().astype(str).unique().tolist())
-if not families:
-    st.warning("No family values found for this store.")
-    st.stop()
+family_options = ["All"] + families
+family_choice = st.sidebar.selectbox("Family", family_options, index=0)
 
-family_choice = st.sidebar.selectbox("Family", families)
+if family_choice == "All":
+    store_family_meta = store_meta.copy()
+else:
+    store_family_meta = store_meta[store_meta["family"] == family_choice].copy()
 
-store_family_meta = store_meta[store_meta["family"] == family_choice].copy()
 if store_family_meta.empty:
     st.warning("No items found for this family in this store.")
     st.stop()
 
 family_items = sorted(store_family_meta["item_nbr"].dropna().astype(str).unique().tolist())
-if not family_items:
-    st.warning("No items found for this selected family.")
-    st.stop()
+item_options = ["All"] + family_items
+item_choice = st.sidebar.selectbox("Item (for forecast plot)", item_options, index=0)
 
-item_choice = st.sidebar.selectbox("Item", family_items)
 top_n = st.sidebar.slider("Top N recommendations", min_value=5, max_value=20, value=10)
 show_forecast_details = st.sidebar.checkbox("Show forecast details table", value=True)
 
@@ -200,7 +231,7 @@ trending_view = trending_scores.copy()
 if not trending_view.empty:
     if "store_nbr" in trending_view.columns:
         trending_view = trending_view[trending_view["store_nbr"] == store_choice]
-    if "family" in trending_view.columns:
+    if family_choice != "All" and "family" in trending_view.columns:
         trending_view = trending_view[trending_view["family"] == family_choice]
 
 trending_view = sort_trending_table(trending_view)
@@ -224,37 +255,9 @@ trending_preferred_cols = [
 trending_display = safe_show_columns(trending_view, trending_preferred_cols)
 
 # -----------------------------
-# Item data
-# -----------------------------
-item_forecast = forecast_detail.copy()
-if "store_nbr" in item_forecast.columns:
-    item_forecast = item_forecast[item_forecast["store_nbr"] == store_choice]
-if "item_nbr" in item_forecast.columns:
-    item_forecast = item_forecast[item_forecast["item_nbr"] == item_choice]
-if "date" in item_forecast.columns:
-    item_forecast = item_forecast.sort_values("date")
-
-item_history = history.copy()
-if "store_nbr" in item_history.columns:
-    item_history = item_history[item_history["store_nbr"] == store_choice]
-if "item_nbr" in item_history.columns:
-    item_history = item_history[item_history["item_nbr"] == item_choice]
-if "date" in item_history.columns:
-    item_history = item_history.sort_values("date")
-
-max_encoder_length = int(config.get("max_encoder_length", 60))
-if not item_history.empty:
-    item_history = item_history.tail(max_encoder_length)
-
-forecast_col = first_existing_column(
-    item_forecast,
-    ["forecast_sales", "predicted_sales", "pred_sales", "yhat"],
-)
-
-# -----------------------------
 # KPI cards
 # -----------------------------
-k1, k2, k3, k4 = st.columns(4)
+k1, k2, k3 = st.columns(3)
 
 with k1:
     st.metric("Items in Store", f"{len(store_meta):,}")
@@ -266,19 +269,16 @@ with k2:
         st.metric("Total Forecast Demand", "N/A")
 
 with k3:
-    if "final_promote_score" in store_meta.columns:
-        st.metric("Best Promote Score", f"{store_meta['final_promote_score'].max():.3f}")
+    if family_choice == "All":
+        st.metric("Items in Selected Family", f"{len(store_meta):,}")
     else:
-        st.metric("Best Promote Score", "N/A")
-
-with k4:
-    st.metric("Items in Family", f"{len(store_family_meta):,}")
+        st.metric("Items in Selected Family", f"{len(store_family_meta):,}")
 
 # -----------------------------
 # Tabs
 # -----------------------------
-tab1, tab2, tab3, tab4 = st.tabs(
-    ["Recommendations", "Trending", "Forecast Plot", "Forecast Details"]
+tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    ["Recommendations", "Family Mix", "Trending", "Forecast Plot", "Forecast Details"]
 )
 
 with tab1:
@@ -307,72 +307,130 @@ with tab1:
         )
 
 with tab2:
-    st.subheader(f"Trending Score Table — Family: {family_choice}")
+    st.subheader(f"Family Mix for Store {store_choice}")
+
+    c1, c2 = st.columns(2)
+
+    with c1:
+        st.markdown(f"### Replenish Family Distribution (Top {top_n})")
+        plot_family_pie(repl, "Replenish by Family")
+
+    with c2:
+        st.markdown(f"### Promote Family Distribution (Top {top_n})")
+        plot_family_pie(promo, "Promote by Family")
+
+with tab3:
+    family_label = family_choice if family_choice != "All" else "All Families"
+    st.subheader(f"Trending Score Table — {family_label}")
 
     if trending_display.empty:
-        st.info("No trending score data found for this store-family combination.")
+        st.info("No trending score data found for this selection.")
     else:
         st.dataframe(trending_display, use_container_width=True)
         st.download_button(
             "Download Trending CSV",
             data=to_csv_bytes(trending_display),
-            file_name=f"trending_store_{store_choice}_family_{family_choice}.csv",
+            file_name=f"trending_store_{store_choice}_{family_label.replace(' ', '_')}.csv",
             mime="text/csv",
         )
-
-with tab3:
-    st.subheader(f"Forecast Plot — Store {store_choice} | Family {family_choice} | Item {item_choice}")
-
-    if item_forecast.empty:
-        st.info("No forecast details found for this store-item.")
-    else:
-        fig, ax = plt.subplots(figsize=(11, 4.5))
-
-        if not item_history.empty and {"date", "unit_sales"}.issubset(item_history.columns):
-            ax.plot(item_history["date"], item_history["unit_sales"], label="History (actual)")
-
-        if {"date", "actual_sales"}.issubset(item_forecast.columns):
-            ax.plot(item_forecast["date"], item_forecast["actual_sales"], label="Horizon (actual)")
-
-        if forecast_col is not None and "date" in item_forecast.columns:
-            ax.plot(item_forecast["date"], item_forecast[forecast_col], label="Horizon (forecast)")
-
-        if "date" in item_forecast.columns and len(item_forecast) > 0:
-            forecast_start = item_forecast["date"].min()
-            ax.axvline(forecast_start, linestyle="--", label="Forecast start")
-
-        ax.set_title(f"Store {store_choice} | Item {item_choice}")
-        ax.set_xlabel("Date")
-        ax.set_ylabel("Unit Sales")
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-        plt.xticks(rotation=30)
-        st.pyplot(fig)
 
 with tab4:
+    if item_choice == "All":
+        st.subheader("Forecast Plot")
+        st.info("Select a specific item from the sidebar to view the forecast plot.")
+    else:
+        item_forecast = forecast_detail.copy()
+        if "store_nbr" in item_forecast.columns:
+            item_forecast = item_forecast[item_forecast["store_nbr"] == store_choice]
+        if "item_nbr" in item_forecast.columns:
+            item_forecast = item_forecast[item_forecast["item_nbr"] == item_choice]
+        if "date" in item_forecast.columns:
+            item_forecast = item_forecast.sort_values("date")
+
+        item_history = history.copy()
+        if "store_nbr" in item_history.columns:
+            item_history = item_history[item_history["store_nbr"] == store_choice]
+        if "item_nbr" in item_history.columns:
+            item_history = item_history[item_history["item_nbr"] == item_choice]
+        if "date" in item_history.columns:
+            item_history = item_history.sort_values("date")
+
+        max_encoder_length = int(config.get("max_encoder_length", 60))
+        if not item_history.empty:
+            item_history = item_history.tail(max_encoder_length)
+
+        forecast_col = first_existing_column(
+            item_forecast,
+            ["forecast_sales", "predicted_sales", "pred_sales", "yhat"],
+        )
+
+        st.subheader(
+            f"Forecast Plot — Store {store_choice} | "
+            f"{'Family ' + family_choice + ' | ' if family_choice != 'All' else ''}"
+            f"Item {item_choice}"
+        )
+
+        if item_forecast.empty:
+            st.info("No forecast details found for this store-item.")
+        else:
+            fig, ax = plt.subplots(figsize=(11, 4.5))
+
+            if not item_history.empty and {"date", "unit_sales"}.issubset(item_history.columns):
+                ax.plot(item_history["date"], item_history["unit_sales"], label="History (actual)")
+
+            if {"date", "actual_sales"}.issubset(item_forecast.columns):
+                ax.plot(item_forecast["date"], item_forecast["actual_sales"], label="Horizon (actual)")
+
+            if forecast_col is not None and "date" in item_forecast.columns:
+                ax.plot(item_forecast["date"], item_forecast[forecast_col], label="Horizon (forecast)")
+
+            if "date" in item_forecast.columns and len(item_forecast) > 0:
+                forecast_start = item_forecast["date"].min()
+                ax.axvline(forecast_start, linestyle="--", label="Forecast start")
+
+            ax.set_title(f"Store {store_choice} | Item {item_choice}")
+            ax.set_xlabel("Date")
+            ax.set_ylabel("Unit Sales")
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+            plt.xticks(rotation=30)
+            st.pyplot(fig)
+
+with tab5:
     st.subheader("Forecast Details")
 
-    if item_forecast.empty:
-        st.info("No forecast details found for this store-item.")
-    elif show_forecast_details:
-        forecast_cols_preferred = [
-            "store_nbr",
-            "item_nbr",
-            "family",
-            "date",
-            "actual_sales",
-            "forecast_sales",
-            "predicted_sales",
-            "pred_sales",
-            "yhat",
-        ]
-        forecast_display = safe_show_columns(item_forecast, forecast_cols_preferred)
-        st.dataframe(forecast_display, use_container_width=True)
-        st.download_button(
-            "Download Forecast Details CSV",
-            data=to_csv_bytes(forecast_display),
-            file_name=f"forecast_store_{store_choice}_item_{item_choice}.csv",
-            mime="text/csv",
-        )
+    if item_choice == "All":
+        st.info("Select a specific item from the sidebar to view forecast details.")
     else:
-        st.info("Enable 'Show forecast details table' from the sidebar to view this section.")
+        item_forecast = forecast_detail.copy()
+        if "store_nbr" in item_forecast.columns:
+            item_forecast = item_forecast[item_forecast["store_nbr"] == store_choice]
+        if "item_nbr" in item_forecast.columns:
+            item_forecast = item_forecast[item_forecast["item_nbr"] == item_choice]
+        if "date" in item_forecast.columns:
+            item_forecast = item_forecast.sort_values("date")
+
+        if item_forecast.empty:
+            st.info("No forecast details found for this store-item.")
+        elif show_forecast_details:
+            forecast_cols_preferred = [
+                "store_nbr",
+                "item_nbr",
+                "family",
+                "date",
+                "actual_sales",
+                "forecast_sales",
+                "predicted_sales",
+                "pred_sales",
+                "yhat",
+            ]
+            forecast_display = safe_show_columns(item_forecast, forecast_cols_preferred)
+            st.dataframe(forecast_display, use_container_width=True)
+            st.download_button(
+                "Download Forecast Details CSV",
+                data=to_csv_bytes(forecast_display),
+                file_name=f"forecast_store_{store_choice}_item_{item_choice}.csv",
+                mime="text/csv",
+            )
+        else:
+            st.info("Enable 'Show forecast details table' from the sidebar to view this section.")
