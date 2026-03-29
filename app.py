@@ -158,6 +158,12 @@ family_items = sorted(store_family_meta["item_nbr"].dropna().astype(str).unique(
 item_options = ["All"] + family_items
 item_choice = st.sidebar.selectbox("Item (for forecast plot)", item_options, index=0)
 
+view_mode = st.sidebar.radio(
+    "Recommendation View",
+    options=["Both", "Replenish", "Promote"],
+    index=0,
+)
+
 top_n = st.sidebar.slider("Top N recommendations", min_value=5, max_value=20, value=10)
 show_forecast_details = st.sidebar.checkbox("Show forecast details table", value=True)
 
@@ -282,21 +288,45 @@ tab1, tab2, tab3, tab4 = st.tabs(
 with tab1:
     st.subheader(f"Store {store_choice} recommendations")
 
-    p1, p2 = st.columns(2)
+    if view_mode == "Both":
+        p1, p2 = st.columns(2)
 
-    with p1:
+        with p1:
+            st.markdown(f"### Replenish Family Distribution (Top {top_n})")
+            plot_family_pie(repl, "Replenish by Family")
+
+        with p2:
+            st.markdown(f"### Promote Family Distribution (Top {top_n})")
+            plot_family_pie(promo, "Promote by Family")
+
+        st.divider()
+
+        c1, c2 = st.columns(2)
+
+        with c1:
+            st.markdown(f"### Top {top_n} Replenish")
+            st.dataframe(repl, use_container_width=True)
+            st.download_button(
+                "Download Replenish CSV",
+                data=to_csv_bytes(repl),
+                file_name=f"replenish_store_{store_choice}.csv",
+                mime="text/csv",
+            )
+
+        with c2:
+            st.markdown(f"### Top {top_n} Promote")
+            st.dataframe(promo, use_container_width=True)
+            st.download_button(
+                "Download Promote CSV",
+                data=to_csv_bytes(promo),
+                file_name=f"promote_store_{store_choice}.csv",
+                mime="text/csv",
+            )
+
+    elif view_mode == "Replenish":
         st.markdown(f"### Replenish Family Distribution (Top {top_n})")
         plot_family_pie(repl, "Replenish by Family")
-
-    with p2:
-        st.markdown(f"### Promote Family Distribution (Top {top_n})")
-        plot_family_pie(promo, "Promote by Family")
-
-    st.divider()
-
-    c1, c2 = st.columns(2)
-
-    with c1:
+        st.divider()
         st.markdown(f"### Top {top_n} Replenish")
         st.dataframe(repl, use_container_width=True)
         st.download_button(
@@ -306,7 +336,10 @@ with tab1:
             mime="text/csv",
         )
 
-    with c2:
+    elif view_mode == "Promote":
+        st.markdown(f"### Promote Family Distribution (Top {top_n})")
+        plot_family_pie(promo, "Promote by Family")
+        st.divider()
         st.markdown(f"### Top {top_n} Promote")
         st.dataframe(promo, use_container_width=True)
         st.download_button(
